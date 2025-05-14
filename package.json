@@ -1,0 +1,38 @@
+{
+  "name": "proyectochat",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node build/app.js > logs/output.log 2>&1 ",
+    "dev": "nodemon src/app.ts",
+    "build": "tsc -p .",
+    "docs": "typedoc --entryPoints src/**/*.ts --out docs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@types/mongoose": "^5.11.97",
+    "@types/qrcode-terminal": "^0.12.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "json2csv": "^6.0.0-alpha.2",
+    "libphonenumber-js": "^1.11.3",
+    "mongoose": "^8.4.1",
+    "morgan": "^1.10.0",
+    "nodemailer": "^6.9.16",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "github:pedroslopez/whatsapp-web.js#webpack-exodus"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.2",
+    "nodemon": "^3.1.3",
+    "ts-node": "^10.9.2",
+    "typedoc": "^0.26.4",
+    "typescript": "^5.4.5"
+  }
+}

@@ -1,0 +1,22 @@
+(node:39688) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Servidor funcionando en el puerto 3050
+1 sesiones anteriores encontradas
+Restaurando sesiones anteriores, espere a los mensajes de confirmación de cada sesión
+Base de datos de MongoDB conectada
+[0mOPTIONS /api/whatsapp/obtenerClientes [32m204[0m 9.311 ms - 0[0m
+[0mGET /api/whatsapp/obtenerClientes [32m200[0m 8.505 ms - 20[0m
+[0mOPTIONS /api/whatsapp/eliminarClientes [32m204[0m 0.374 ms - 0[0m
+Error al eliminar sesiones: [Error: EBUSY: resource busy or locked, unlink 'C:\Users\USER\Documents\GitHub\Gestor-de-mesajeria-via-WhatsApp\.wwebjs_auth\session-1234\Default\chrome_debug.log'] {
+  errno: -4082,
+  code: 'EBUSY',
+  syscall: 'unlink',
+  path: 'C:\\Users\\USER\\Documents\\GitHub\\Gestor-de-mesajeria-via-WhatsApp\\.wwebjs_auth\\session-1234\\Default\\chrome_debug.log'
+}
+[0mDELETE /api/whatsapp/eliminarClientes [32m200[0m 32.047 ms - 43[0m
+Error al cerrar sesión 1234: TypeError: Cannot read properties of undefined (reading 'wid')
+    at WhatsappWebSession.<anonymous> (C:\Users\USER\Documents\GitHub\Gestor-de-mesajeria-via-WhatsApp\build\services\WhatsappWebSession.js:92:74)
+    at Generator.throw (<anonymous>)
+    at rejected (C:\Users\USER\Documents\GitHub\Gestor-de-mesajeria-via-WhatsApp\build\services\WhatsappWebSession.js:6:65)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+[0mOPTIONS /api/whatsapp/CrearCliente [32m204[0m 0.284 ms - 0[0m

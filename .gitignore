@@ -1,0 +1,6 @@
+/node_modules
+.env
+cositas.txt
+/.wwebjs_auth/*
+/.wwebjs_cache
+messages.csv
