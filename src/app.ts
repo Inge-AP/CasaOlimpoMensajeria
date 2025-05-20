@@ -36,7 +36,7 @@ const corsOptions: cors.CorsOptions = {
 };
 
 // Conexión a la base de datos
-connectDB();
+// connectDB();
 
 // Middleware para parsear JSON
 app.use(express.json());
