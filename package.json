@@ -9,7 +9,7 @@
   "restart": "pm2 restart MensajeriaCo",
   "stop": "pm2 stop MensajeriaCo",
   "dev": "nodemon src/app.ts",
-  "build": "tsc -p . && cp -r src/public build/",
+  "build": "tsc -p .",
   "clean": "rm -rf build/",
   "docs": "typedoc --entryPoints src/**/*.ts --out docs",
   "prod": "npm run build && npm run start"
