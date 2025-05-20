@@ -5,9 +5,9 @@
   "main": "index.js",
   
   "scripts": {
-  "start": "pm2 start build/app.js --name 'tu-app' --log logs/output.log",
-  "restart": "pm2 restart tu-app",
-  "stop": "pm2 stop tu-app",
+  "start": "pm2 start build/app.js --name 'MensajeriaCo' --log logs/output.log",
+  "restart": "pm2 restart MensajeriaCo",
+  "stop": "pm2 stop MensajeriaCo",
   "dev": "nodemon src/app.ts",
   "build": "tsc -p . && cp -r src/public build/",
   "clean": "rm -rf build/",
