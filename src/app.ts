@@ -11,7 +11,7 @@ import whatsWebRoutes from "./routes/whatsWebRoutes";
 
 // Importación de las utilidades
 import utilRoutes from "./routes/utilRoutes";
-// import processWhitelist from "./utils/corsUtils";
+import processWhitelist from "./utils/corsUtils";
 
 // Configuración de variables de entorno
 dotenv.config();
@@ -19,21 +19,21 @@ dotenv.config();
 const app = express();
 
 // Define una lista blanca de URLs permitidas para CORS
-// const whitelist: string[] = processWhitelist();
+const whitelist: string[] = processWhitelist();
 
-// // Configuramos los dominios permitidos por CORS
-// const corsOptions: cors.CorsOptions = {
-//   origin: function (
-//     origin: string | undefined,
-//     callback: (err: Error | null, allow?: boolean) => void
-//   ) {
-//     if (whitelist.includes(origin || "")) {
-//       callback(null, true);
-//     } else {
-//       callback(new Error(`No permitido por CORS en: ${origin}`));
-//     }
-//   },
-// };
+// Configuramos los dominios permitidos por CORS
+const corsOptions: cors.CorsOptions = {
+  origin: function (
+    origin: string | undefined,
+    callback: (err: Error | null, allow?: boolean) => void
+  ) {
+    if (whitelist.includes(origin || "")) {
+      callback(null, true);
+    } else {
+      callback(new Error(`No permitido por CORS en: ${origin}`));
+    }
+  },
+};
 
 // Conexión a la base de datos
 // connectDB();
@@ -45,7 +45,7 @@ app.use(express.json());
 app.use(morgan("dev"));
 
 // Configuración de CORS
-// app.use(cors(corsOptions));
+app.use(cors({origin: '*'}));
 
 // Inicializando el cliente de WhatsApp Web
 const WhatsAppWebClient = WhatsAppClient.getInstance();
