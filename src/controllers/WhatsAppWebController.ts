@@ -27,7 +27,9 @@ export const createWAClient = async (req: Request, res: Response): Promise<void>
     }
 
     const WhatsAppWebClient = WhatsAppClient.getInstance();
-    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Type', 'text/plain;  charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
     res.setHeader('Transfer-Encoding', 'chunked');
     WhatsAppWebClient.createWAClient(sessionId, qr => {
         qrcode.generate(qr, { small: true });
