@@ -5,14 +5,10 @@
   "main": "index.js",
   
   "scripts": {
-  "start": "pm2 start build/app.js --name 'MensajeriaCo' --log logs/output.log",
-  "restart": "pm2 restart MensajeriaCo",
-  "stop": "pm2 stop MensajeriaCo",
-  "dev": "nodemon src/app.ts",
-  "build": "tsc -p .",
-  "clean": "rm -rf build/",
-  "docs": "typedoc --entryPoints src/**/*.ts --out docs",
-  "prod": "npm run build && npm run start"
+    "start": "node build/app.js > logs/output.log 2>&1 ",
+    "dev": "nodemon src/app.ts",
+    "build": "tsc -p .",
+    "docs": "typedoc --entryPoints src/**/*.ts --out docs"
   },
   "keywords": [],
   "author": "",
