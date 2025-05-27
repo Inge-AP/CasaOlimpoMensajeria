@@ -7,7 +7,6 @@ module.exports = {
       PUPPETEER_EXECUTABLE_PATH: '/usr/bin/chromium-browser',
       PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true',
       NODE_ENV: 'production'
-    },
-    node_args: '--no-sandbox'
+    }
   }]
 }

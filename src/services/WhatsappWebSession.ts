@@ -28,6 +28,9 @@ export class WhatsappWebSession {
         clientId: sessionId,
         dataPath: path.join(__dirname, "../../.wwebjs_auth"),
       }),
+      puppeteer: {
+        args: ['--no-sandbox', '--disable-setuid-sandbox']
+      }
     });
 
     // Configuración de eventos para manejar el QR, la preparación y los errores.
