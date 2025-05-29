@@ -140,26 +140,40 @@ class WhatsAppClient {
       const sessionIds = directoryNames.map((name) => name.split("-")[1]);
 
       // Eliminar las sesiones en memoria
-      sessionIds.forEach((sessionId) => {
+      // sessionIds.forEach((sessionId) => {
+      //   const session = this.sessionIdVsClientInstance[sessionId];
+      //   if (session) {
+      //     session
+      //       .logout()
+      //       .catch((err) =>
+      //         console.error(`Error al cerrar sesión ${sessionId}:`, err)
+      //       );
+      //     delete this.sessionIdVsClientInstance[sessionId];
+      //   }
+      // });
+      for (const sessionId of sessionIds) {
         const session = this.sessionIdVsClientInstance[sessionId];
         if (session) {
-          session
-            .logout()
-            .catch((err) =>
-              console.error(`Error al cerrar sesión ${sessionId}:`, err)
-            );
+          try {
+            await session.logout();
+          } catch (err) {
+            console.error(`Error al cerrar sesión ${sessionId}:`, err);
+          }
           delete this.sessionIdVsClientInstance[sessionId];
         }
-      });
+      }
 
       // Eliminar los datos persistidos en el sistema de archivos
       for (const directory of directoryNames) {
         const dirPath = path.join(authPath, directory);
         if (await this.directoryExists(dirPath)) {
-          await rm(dirPath, { recursive: true, force: true });
+          try {
+            await rm(dirPath, { recursive: true, force: true });
+          } catch(err) {
+            console.error(`Error al eliminar la carpeta ${dirPath}:`, err);
+          }
         }
       }
-
       console.log(`Todas las sesiones eliminadas exitosamente.`);
     } catch (err) {
       console.error("Error al eliminar sesiones:", err);
