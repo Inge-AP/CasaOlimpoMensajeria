@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import WhatsAppClient from '../services/whatsappwebService';
 import qrcode from 'qrcode-terminal';
 import BrowserManager from '../services/BrowserManager';
+import { Session } from 'inspector';
 
 /**
  * Obtiene todos los clientes de WhatsApp.
@@ -36,6 +37,8 @@ export const createWAClient = async (req: Request, res: Response): Promise<void>
             const WhatsAppWebClient = WhatsAppClient.getInstance();
             const browserManager = BrowserManager.getInstance();
 
+            browserManager.registerSession(sessionId);
+
             const isHealthy = await browserManager.healthCheck();
             if(!isHealthy) {
                 await browserManager.restartBrowser();
@@ -55,24 +58,15 @@ export const createWAClient = async (req: Request, res: Response): Promise<void>
                 res.end();
             });
         } catch (error) {
+            const browserManager = BrowserManager.getInstance();
+            browserManager.unregisterSession(sessionId);
             if (attempts < maxAttempts) {
-                try {
-                    const browserManager = BrowserManager.getInstance();
-                    await browserManager.restartBrowser();
-                    setTimeout(() => attemptCreation(), 5000);
-                } catch (restartError) {
-                    if (!res.headersSent) {
-                        res.status(500).json({ 
-                            error: 'Error crítico en creación de cliente',
-                            attempt: attempts,
-                            details: error.message 
-                        });
-                    }
-                }
+                setTimeout(() => attemptCreation(), 5000);
             } else {
                 if (!res.headersSent) {
                     res.status(500).json({ 
-                        error: `Error al crear cliente después de ${maxAttempts} intentos`,
+                        error: 'Error crítico en creación de cliente',
+                        attempt: attempts,
                         details: error.message 
                     });
                 }
@@ -92,8 +86,12 @@ export const createWAClient = async (req: Request, res: Response): Promise<void>
 export const deleteAllClients = async (req: Request, res: Response): Promise<void> => {
     try {
         const WhatsAppWebClient = WhatsAppClient.getInstance();
-        await WhatsAppWebClient.deleteAllSessions();
         const browserManager = BrowserManager.getInstance();
+        const currentClients = Object.keys(WhatsAppWebClient.getAllClients());
+        currentClients.forEach(sessionId => {
+            browserManager.unregisterSession(sessionId);
+        });
+        await WhatsAppWebClient.deleteAllSessions();
         setTimeout(async () => {
             await browserManager.restartBrowser();
         }, 3000);

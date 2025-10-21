@@ -130,14 +130,26 @@ class WhatsAppClient {
     );
   };
 
+  private async cleanupWwebjsAuth(): Promise<void> {
+    const authPath = path.resolve(__dirname, "../../.wwebjs_auth");
+    try {
+      if (await this.directoryExists(authPath)) {
+        await rm(authPath, { recursive: true, force: true});
+      }
+      await this.ensureDirectoryExists(authPath);
+      console.log("✅ Carpeta .wwebjs_auth recreada");
+    } catch (error) {
+      console.error("❌ Error limpiando .wwebjs_auth:", error);
+      throw error;
+    }
+  }
+
   /**
    * Elimina todas las sesiones de WhatsApp, tanto en memoria como en el sistema de archivos.
    */
   public async deleteAllSessions(): Promise<void> {
-    const authPath = path.resolve(__dirname, "../../.wwebjs_auth");
     try {
-      const directoryNames = await this.getDirectories(authPath);
-      const sessionIds = directoryNames.map((name) => name.split("-")[1]);
+      const sessionIds = Object.keys(this.sessionIdVsClientInstance);
 
       // Eliminar las sesiones en memoria
       // sessionIds.forEach((sessionId) => {
@@ -163,20 +175,12 @@ class WhatsAppClient {
         }
       }
 
-      // Eliminar los datos persistidos en el sistema de archivos
-      for (const directory of directoryNames) {
-        const dirPath = path.join(authPath, directory);
-        if (await this.directoryExists(dirPath)) {
-          try {
-            await rm(dirPath, { recursive: true, force: true });
-          } catch(err) {
-            console.error(`Error al eliminar la carpeta ${dirPath}:`, err);
-          }
-        }
-      }
+      await this.cleanupWwebjsAuth();
+
       console.log(`Todas las sesiones eliminadas exitosamente.`);
     } catch (err) {
       console.error("Error al eliminar sesiones:", err);
+      throw err;
     }
   }
 
@@ -195,6 +199,11 @@ class WhatsAppClient {
       }
       if (await this.directoryExists(sessionDir)) {
         await rm(sessionDir, { recursive: true, force: true });
+      }
+
+      const remainingDirs = await this.getDirectories(authPath);
+      if(remainingDirs.length === 0){
+        await this.cleanupWwebjsAuth();
       }
       console.log(`Sesión ${sessionId} eliminada exitosamente.`);
     } catch (err) {

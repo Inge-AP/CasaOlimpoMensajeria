@@ -1,8 +1,9 @@
-import puppeteer, { Browser } from 'puppeteer';
+import puppeteer, { Browser, Page } from 'puppeteer';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import AutoCleanupManager from './AutoCleanupManager';
 import { resolve } from 'path';
+import { rejects } from 'assert';
 
 const execAsync = promisify(exec);
 
@@ -11,10 +12,12 @@ class BrowserManager {
     private static instance: BrowserManager;
     private browser: Browser | null = null;
     private isLaunching: boolean = false;
+    private isClosing: boolean = false;
     private launchAttempts: number = 0;
     private readonly maxLaunchAttempts = 5;
     private autoCleanup: AutoCleanupManager;
     private restartTimer: NodeJS.Timeout | null = null;
+    private activeSessions: Set<string> = new Set();
 
     private constructor() {
         this.autoCleanup = AutoCleanupManager.getInstance();
@@ -30,21 +33,33 @@ class BrowserManager {
 
     private setupAutoRestart(): void {
         this.restartTimer = setInterval(async () => {
-            const memoryUsage = process.memoryUsage();
-            if(memoryUsage.heapUsed > 800 * 1024 * 1024) {
-                await this.restartBrowser();
+            if (this.activeSessions.size === 0){
+                const memoryUsage = process.memoryUsage();
+                if(memoryUsage.heapUsed > 800 * 1024 * 1024) {
+                    await this.restartBrowser();
+                }
             }
         }, 14400000);
     }
 
-    private async instantCleanup(): Promise<void> {
+    private async safeClenaup(): Promise<void> {
         try {
             if (process.platform === 'linux') {
-                await execAsync('pkill -9 -f chromium 2>/dev/null || true');
-                await execAsync('pkill -9 -f chrome 2>/dev/null || true');
-                await execAsync('rm -rf /root/snap/chromium/common/chromium/SingletonLock 2>/dev/null || true');
-                await execAsync('rm -rf /tmp/.com.google.Chrome.* 2>/dev/null || true');
-                await new Promise(resolve => setTimeout(resolve, 3000));
+                await execAsync('timeout 10 pkill -TERM chromium 2>/dev/null || true');
+                await new Promise(resolve => setTimeout(resolve, 2000));
+                await execAsync('timeout 5 pkill -KILL chromium 2>/dev/null || true');
+
+                const lockFiles = [
+                    '/root/snap/chromium/common/chromium/SingletonLock',
+                    '/tmp/.com.google.Chrome.*',
+                    '/tmp/.org.chromium.Chromium.*'
+                ];
+
+                for (const pattern of lockFiles) {
+                    await execAsync(`find ${pattern.includes('*') ? '/tmp' : '/root'} -name "${pattern.split('/').pop()}" -delete 2>/dev/null || true`);
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         } catch (error) {
             console.warn('⚠️ Advertencia en limpieza instantánea:', error.message);
@@ -79,7 +94,9 @@ class BrowserManager {
             '--metrics-recording-only',
             '--no-pings',
             '--safebrowsing-disable-auto-update',
-            '--disable-component-update'
+            '--disable-component-update',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=VizDisplayCompositor,VizHitTestSurfaceLayer'
         ];
 
         const config: any = {
@@ -90,7 +107,9 @@ class BrowserManager {
             ignoreDefaultArgs: ['--disable-extensions'],
             handleSIGINT: false,
             handleSIGTERM: false,
-            handleSIGHUP: false
+            handleSIGHUP: false,
+            ignoreHTTPSErrors: true,
+            devtools: false
         };
 
         if (process.env.NODE_ENV === 'production' && process.env.PUPPETEER_EXECUTALE_PATH) {
@@ -102,9 +121,17 @@ class BrowserManager {
 
 
     async getBrowser(): Promise<Browser> {
+        if (this.isClosing) {
+            while (this.isClosing) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
         if (this.browser && this.browser.isConnected()) {
             try {
-                await this.browser.pages(); // Test de conectividad
+                const pages = await Promise.race([
+                    this.browser.pages(),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                ]) as Page[];
                 return this.browser;
             } catch (error) {
                 console.log('🔄 Navegador desconectado, creando uno nuevo...');
@@ -128,23 +155,24 @@ class BrowserManager {
         this.isLaunching = true
 
         try {
-            await this.instantCleanup();
+            await this.safeClenaup();
 
             const config = this.getBrowserConfig();
             this.browser = await puppeteer.launch(config);
 
             this.browser.on('disconnected', async () => {
-                this.browser = null;
-                
-                setTimeout(async () => {
-                    try {
-                        if (!this.browser) {
-                            await this.getBrowser();
-                        }
-                    } catch (error) {
-                        console.log('Error en auto-relanzamiento', error.message);
+                if(!this.isClosing) {
+                    this.browser = null;
+                    if (this.activeSessions.size > 0) {
+                        setTimeout(async () => {
+                            try {
+                                await this.getBrowser();
+                            } catch (error) {
+                                console.log('Error en auto-relanzamiento', error.message);
+                            }
+                        }, 5000);
                     }
-                }, 5000)
+                }
             });
 
             this.browser.on('targetcreated', (target) => {
@@ -155,16 +183,23 @@ class BrowserManager {
                 console.log(`🗑️ Pestaña cerrada: ${target.type()}`);
             });
 
+            this.browser.on('error', (error) => {
+                console.error('❌ Error en el navegador:', error.message);
+            });
+
             setInterval(async () => {
-                if (this.browser && this.browser.isConnected()) {
+                if (this.browser && this.browser.isConnected() && !this.isClosing) {
                     try {
                         const pages = await this.browser.pages();
-                        if (pages.length > 15) {
-                            for (let i = 10; i < pages.length; i++) {
-                                const url = pages[i].url();
-
-                                if (!url.includes('web.whatsapp.com')) {
-                                    await pages[i].close();
+                        if (pages.length > 20) {
+                            for (let i = 15; i < pages.length; i++) {
+                                try {
+                                    const url = pages[i].url();
+                                    if (!url.includes('web.whatsapp.com')) {
+                                        await pages[i].close();
+                                    }
+                                } catch (pageError) {
+                                    
                                 }
                             }
                         }
@@ -185,7 +220,7 @@ class BrowserManager {
             if (this.launchAttempts >= this.maxLaunchAttempts) {
                 this.launchAttempts = 0;
                 await this.autoCleanup.emergencyCleanup();
-                await new Promise(resolve => setTimeout(resolve, 10000));
+                await new Promise(resolve => setTimeout(resolve, 15000));
                 return this.launchBrowser();
             }
 
@@ -195,12 +230,25 @@ class BrowserManager {
     }
 
     async closeBrowser(): Promise<void> {
-        if (this.browser) {
+        if (this.browser && !this.isClosing) {
+            this.isClosing = true;
             try {
+                const pages = await this.browser.pages();
+                for (const page of pages) {
+                    try {
+                        if (!page.isClosed()) {
+                            await page.close();
+                        }
+                    } catch (error) {
+
+                    }
+                }
                 await this.browser.close();
                 this.browser = null;
             } catch (error) {
                 this.browser = null;
+            } finally {
+                this.isClosing = false;
             }
         }
     }
@@ -208,20 +256,39 @@ class BrowserManager {
     async restartBrowser(): Promise<Browser> {
         console.log('🔄 Reiniciando navegador automáticamente...');
         await this.closeBrowser();
-        await this.instantCleanup();
+        await this.safeClenaup();
+        await new Promise(resolve => setTimeout(resolve, 3000));
         return this.getBrowser();
     }
 
     async healthCheck(): Promise<boolean> {
         try {
-            if (!this.browser || !this.browser.isConnected()) {
+            if (!this.browser || !this.browser.isConnected() || this.isClosing) {
                 return false;
             }
-            await this.browser.pages();
-            return true;
+            const pages = await Promise.race([
+                this.browser.pages(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+            ]) as Page[];
+            return pages.length >= 0;
         } catch (error) {
             return false;
         }
+    }
+
+    registerSession(sessionId: string): void {
+        this.activeSessions.add(sessionId);
+        console.log(`📱 Sesión registrada: ${sessionId} (Total: ${this.activeSessions.size})`);
+    }
+
+    // Método para desregistrar sesiones
+    unregisterSession(sessionId: string): void {
+        this.activeSessions.delete(sessionId);
+        console.log(`📱 Sesión eliminada: ${sessionId} (Total: ${this.activeSessions.size})`);
+    }
+
+    getActiveSessionsCount(): number {
+        return this.activeSessions.size;
     }
 
     destroy(): void {
