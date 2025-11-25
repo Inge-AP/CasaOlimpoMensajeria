@@ -9,10 +9,11 @@ export class WhatsappWebSession {
   public client: Client;
   private isReady: boolean = false;
   private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 5;
-  private reconnectDelay: number = 8000; // 8 segundos
+  private maxReconnectAttempts: number = 3; // Reducido a 3
+  private reconnectDelay: number = 15000; // 15 segundos
   private sessionId: string;
   private initPromise: Promise<void> | null = null;
+  private disconnectHandler: NodeJS.Timeout | null = null;
 
   constructor(
     sessionId: string,
@@ -37,7 +38,8 @@ export class WhatsappWebSession {
         args: puppeteerArgs,
         timeout: 120000, // 2 minutos
         ignoreHTTPSErrors: true,
-      }
+      },
+      restartOnAuthFail: true, // Reiniciar en fallo de auth
     });
 
     this.client.on("qr", qrGenerationCallback);
@@ -51,6 +53,9 @@ export class WhatsappWebSession {
     this.client.on("error", this.onError.bind(this));
     this.client.on("auth_failure", this.onAuthFailure.bind(this));
     this.client.on("disconnected", () => this.onDisconnected(sessionId));
+    this.client.on("authenticated", () => {
+      console.log(`🔐 Sesión ${sessionId} autenticada`);
+    });
 
     // Inicializar de forma no bloqueante
     this.initPromise = this.initializeWithRetry().catch(err => {
@@ -128,6 +133,14 @@ export class WhatsappWebSession {
       '--disable-site-isolation-trials',
       '--mute-audio',
       '--disable-web-resources',
+      '--disable-component-update',
+      '--disable-default-apps',
+      '--disable-preconnect',
+      '--disable-client-side-phishing-detection',
+      '--disable-hang-monitor',
+      '--disable-prompt-on-repost',
+      '--disable-media-session-api',
+      '--disable-breakpad',
     ];
 
     // Para VPS muy limitado
@@ -135,9 +148,6 @@ export class WhatsappWebSession {
       baseArgs.push(
         '--single-process',
         '--no-zygote',
-        '--disable-breakpad',
-        '--disable-component-extensions-with-background-pages',
-        '--disable-component-update',
       );
     }
 
@@ -172,35 +182,51 @@ export class WhatsappWebSession {
 
   private onError(error: any) {
     console.error("❌ Error en cliente WhatsApp:", error.message || error);
+    
+    // Si el error es de contexto, no intentar reconectar inmediatamente
+    if (error.message?.includes("Execution context")) {
+      console.log("⚠️ Error de contexto detectado, esperando antes de reconectar");
+      this.isReady = false;
+    }
   }
 
   private onAuthFailure() {
-    console.error("❌ Fallo de autenticación");
+    console.error("❌ Fallo de autenticación - sesión expiró");
     this.isReady = false;
+    this.reconnectAttempts = 999; // No reconectar después de fallo de auth
   }
 
   private async onDisconnected(sessionId: string) {
     console.warn("⚠️ Cliente desconectado:", sessionId);
     this.isReady = false;
     
+    // Cancelar reconexión pendiente si existe
+    if (this.disconnectHandler) {
+      clearTimeout(this.disconnectHandler);
+      this.disconnectHandler = null;
+    }
+    
     // Limpiar archivos bloqueados antes de reconectar
     this.cleanupLockFiles();
     
-    // Intentar reconectar
+    // Intentar reconectar solo si no fue un fallo de autenticación
     if (this.reconnectAttempts < this.maxReconnectAttempts) {
       this.reconnectAttempts++;
       console.log(`↻ Reintentando conexión (${this.reconnectAttempts}/${this.maxReconnectAttempts}) en ${this.reconnectDelay}ms`);
       
-      // Esperar antes de reconectar para liberar recursos
-      await new Promise(resolve => setTimeout(resolve, this.reconnectDelay));
-      
-      try {
-        await this.client.initialize();
-      } catch (err: any) {
-        console.error("❌ Error reconectando:", err.message);
-      }
+      // Esperar más tiempo antes de reconectar
+      this.disconnectHandler = setTimeout(async () => {
+        try {
+          console.log(`🔄 Reconectando sesión ${sessionId}...`);
+          await this.client.initialize();
+        } catch (err: any) {
+          console.error("❌ Error reconectando:", err.message);
+          // No registrar el error aquí, dejar que el evento disconnected lo maneje
+        }
+      }, this.reconnectDelay);
     } else {
       console.error(`❌ Máximo de reintentos alcanzado para sesión ${sessionId}`);
+      console.log(`💡 Para reconectar, elimina la carpeta: .wwebjs_auth/${sessionId}`);
     }
   }
 
