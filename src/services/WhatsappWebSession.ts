@@ -8,12 +8,8 @@ import { execSync } from "child_process";
 export class WhatsappWebSession {
   public client: Client;
   private isReady: boolean = false;
-  private reconnectAttempts: number = 0;
-  private maxReconnectAttempts: number = 3; // Reducido a 3
-  private reconnectDelay: number = 15000; // 15 segundos
   private sessionId: string;
-  private initPromise: Promise<void> | null = null;
-  private disconnectHandler: NodeJS.Timeout | null = null;
+  private keepAliveInterval: NodeJS.Timeout | null = null;
 
   constructor(
     sessionId: string,
@@ -22,10 +18,8 @@ export class WhatsappWebSession {
   ) {
     this.sessionId = sessionId;
     
-    // Limpiar archivos bloqueados antes de inicializar
     this.cleanupLockFiles();
     
-    // Detectar si estamos en Linux y configurar según disponibilidad de /dev/shm
     const puppeteerArgs = this.getPuppeteerArgs();
     
     this.client = new Client({
@@ -36,58 +30,55 @@ export class WhatsappWebSession {
       puppeteer: {
         headless: true,
         args: puppeteerArgs,
-        timeout: 120000, // 2 minutos
+        timeout: 120000,
         ignoreHTTPSErrors: true,
       },
-      restartOnAuthFail: true, // Reiniciar en fallo de auth
     });
+
+    // Evitar memory leaks
+    this.client.setMaxListeners(20);
 
     this.client.on("qr", qrGenerationCallback);
     this.client.on("ready", () => {
       this.isReady = true;
-      this.reconnectAttempts = 0; // Reset contador
       console.log(`✓ Sesión ${sessionId} lista`);
       readyInstaceCallback(sessionId);
+      this.startKeepAlive();
     });
     this.client.on("message_create", this.onMessageCreate.bind(this));
     this.client.on("error", this.onError.bind(this));
     this.client.on("auth_failure", this.onAuthFailure.bind(this));
-    this.client.on("disconnected", () => this.onDisconnected(sessionId));
+    this.client.on("disconnected", () => this.onDisconnected());
     this.client.on("authenticated", () => {
       console.log(`🔐 Sesión ${sessionId} autenticada`);
     });
 
-    // Inicializar de forma no bloqueante
-    this.initPromise = this.initializeWithRetry().catch(err => {
-      console.error("Error crítico inicializando cliente para sesión", sessionId, err);
+    // Inicializar sin reintentos agresivos
+    this.client.initialize().catch(err => {
+      console.error("Error inicializando cliente:", err.message);
     });
   }
 
-  private async initializeWithRetry(): Promise<void> {
-    let initAttempts = 0;
-    const maxInitAttempts = 3;
-
-    while (initAttempts < maxInitAttempts) {
-      try {
-        console.log(`Inicializando sesión ${this.sessionId} (intento ${initAttempts + 1}/${maxInitAttempts})`);
-        await this.client.initialize();
-        return;
-      } catch (err: any) {
-        initAttempts++;
-        if (initAttempts < maxInitAttempts) {
-          console.warn(`Error inicializando, reintentando en 10 segundos...`, err.message);
-          await new Promise(resolve => setTimeout(resolve, 10000));
-        } else {
-          throw err;
-        }
+  private startKeepAlive(): void {
+    // Ping cada 30 segundos para mantener la sesión activa
+    if (this.keepAliveInterval) clearInterval(this.keepAliveInterval);
+    
+    this.keepAliveInterval = setInterval(() => {
+      if (this.isReady) {
+        // Enviar un ping silencioso para mantener viva la conexión
+        this.client.pupPage?.evaluate(() => {
+          // Evalúa que la página sigue activa
+          return true;
+        }).catch(() => {
+          console.warn("KeepAlive: No se pudo evaluar la página");
+        });
       }
-    }
+    }, 30000);
   }
 
   private cleanupLockFiles(): void {
     try {
       if (process.platform === 'linux') {
-        // Limpiar archivos SingletonLock de Chromium
         const homeDir = process.env.HOME || '/root';
         const snapsPath = path.join(homeDir, 'snap/chromium/common/chromium');
         const singletonLock = path.join(snapsPath, 'SingletonLock');
@@ -95,22 +86,19 @@ export class WhatsappWebSession {
         if (fs.existsSync(singletonLock)) {
           try {
             fs.unlinkSync(singletonLock);
-            console.log(`Archivo bloqueado limpiado: ${singletonLock}`);
           } catch (err) {
-            console.warn(`No se pudo eliminar ${singletonLock}:`, err);
+            // Silent fail
           }
         }
 
-        // Limpiar procesos de chrome/chromium huérfanos
         try {
           execSync("pkill -9 -f 'chromium-browser|chrome|chromium' || true", { stdio: 'ignore' });
-          console.log("Procesos de Chromium huérfanos limpiados");
         } catch (err) {
           // Silent fail
         }
       }
     } catch (err) {
-      console.warn("Advertencia al limpiar archivos bloqueados:", err);
+      // Silent fail
     }
   }
 
@@ -124,31 +112,17 @@ export class WhatsappWebSession {
       '--disable-extensions',
       '--disable-default-apps',
       '--disable-sync',
-      '--disable-sync-types',
       '--disable-popup-blocking',
       '--no-first-run',
       '--no-default-browser-check',
       '--disable-blink-features=AutomationControlled',
       '--disable-features=IsolateOrigins,site-per-process',
-      '--disable-site-isolation-trials',
       '--mute-audio',
-      '--disable-web-resources',
       '--disable-component-update',
-      '--disable-default-apps',
-      '--disable-preconnect',
-      '--disable-client-side-phishing-detection',
-      '--disable-hang-monitor',
-      '--disable-prompt-on-repost',
-      '--disable-media-session-api',
-      '--disable-breakpad',
     ];
 
-    // Para VPS muy limitado
     if (process.platform === 'linux') {
-      baseArgs.push(
-        '--single-process',
-        '--no-zygote',
-      );
+      baseArgs.push('--single-process', '--no-zygote');
     }
 
     return baseArgs;
@@ -162,7 +136,6 @@ export class WhatsappWebSession {
     const startTime = Date.now();
     while (!this.isReady) {
       if (Date.now() - startTime > timeoutMs) {
-        console.warn(`Timeout esperando sesión ${this.sessionId}`);
         return false;
       }
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -181,59 +154,28 @@ export class WhatsappWebSession {
   }
 
   private onError(error: any) {
-    console.error("❌ Error en cliente WhatsApp:", error.message || error);
-    
-    // Si el error es de contexto, no intentar reconectar inmediatamente
-    if (error.message?.includes("Execution context")) {
-      console.log("⚠️ Error de contexto detectado, esperando antes de reconectar");
-      this.isReady = false;
-    }
+    console.error("❌ Error:", error.message || error);
   }
 
   private onAuthFailure() {
-    console.error("❌ Fallo de autenticación - sesión expiró");
+    console.error("❌ Fallo de autenticación");
     this.isReady = false;
-    this.reconnectAttempts = 999; // No reconectar después de fallo de auth
   }
 
-  private async onDisconnected(sessionId: string) {
-    console.warn("⚠️ Cliente desconectado:", sessionId);
+  private onDisconnected() {
+    console.warn("⚠️ Cliente desconectado");
     this.isReady = false;
     
-    // Cancelar reconexión pendiente si existe
-    if (this.disconnectHandler) {
-      clearTimeout(this.disconnectHandler);
-      this.disconnectHandler = null;
-    }
-    
-    // Limpiar archivos bloqueados antes de reconectar
-    this.cleanupLockFiles();
-    
-    // Intentar reconectar solo si no fue un fallo de autenticación
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      console.log(`↻ Reintentando conexión (${this.reconnectAttempts}/${this.maxReconnectAttempts}) en ${this.reconnectDelay}ms`);
-      
-      // Esperar más tiempo antes de reconectar
-      this.disconnectHandler = setTimeout(async () => {
-        try {
-          console.log(`🔄 Reconectando sesión ${sessionId}...`);
-          await this.client.initialize();
-        } catch (err: any) {
-          console.error("❌ Error reconectando:", err.message);
-          // No registrar el error aquí, dejar que el evento disconnected lo maneje
-        }
-      }, this.reconnectDelay);
-    } else {
-      console.error(`❌ Máximo de reintentos alcanzado para sesión ${sessionId}`);
-      console.log(`💡 Para reconectar, elimina la carpeta: .wwebjs_auth/${sessionId}`);
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
     }
   }
 
   public async sendMessage(phoneNumber: string, message: string): Promise<void> {
     try {
       if (!this.isReady) {
-        throw new Error("Cliente no está listo. Por favor intenta más tarde.");
+        throw new Error("Cliente no está listo.");
       }
 
       if (!this.client.info) {
@@ -244,21 +186,20 @@ export class WhatsappWebSession {
       await this.client.sendMessage(formattedNumber, message);
       console.log("✓ Mensaje enviado a", formattedNumber);
     } catch (err: any) {
-      console.error("❌ Error al enviar el mensaje:", err.message);
-      // No lanzar el error, solo registrarlo para que el mensaje se considere enviado
+      console.error("❌ Error:", err.message);
+      // No lanzar error - el mensaje se considera enviado
     }
   }
 
   public async logout(): Promise<void> {
     try {
       this.isReady = false;
-      await this.client.logout();
-      if (this.client.info) {
-        console.log(`✓ Cierre de sesión exitoso para ${this.client.info.wid.user}`);
+      if (this.keepAliveInterval) {
+        clearInterval(this.keepAliveInterval);
       }
+      await this.client.logout();
     } catch (err: any) {
       console.error("❌ Error al cerrar sesión:", err.message);
-      throw err;
     }
   }
 }
