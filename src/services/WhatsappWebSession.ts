@@ -2,16 +2,23 @@ import { Client, LocalAuth } from "whatsapp-web.js";
 import qrcode from "qrcode-terminal";
 import { formatPhoneNumberForWhatsApp } from "../utils/phoneNumberUtil";
 import path from "path";
+import fs from "fs";
 
 export class WhatsappWebSession {
   public client: Client;
   private isReady: boolean = false;
+  private reconnectAttempts: number = 0;
+  private maxReconnectAttempts: number = 5;
+  private reconnectDelay: number = 5000; // 5 segundos
 
   constructor(
     sessionId: string,
     qrGenerationCallback: (qr: string) => void,
     readyInstaceCallback: (sessionId: string) => void
   ) {
+    // Detectar si estamos en Linux y configurar según disponibilidad de /dev/shm
+    const puppeteerArgs = this.getPuppeteerArgs();
+    
     this.client = new Client({
       authStrategy: new LocalAuth({
         clientId: sessionId,
@@ -19,48 +26,70 @@ export class WhatsappWebSession {
       }),
       puppeteer: {
         headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu',
-          '--disable-web-resources',
-          '--disable-extensions',
-          '--disable-blink-features=AutomationControlled',
-          '--disable-default-apps',
-          '--disable-translate',
-          '--disable-sync',
-          '--metrics-recording-only',
-          '--disable-background-networking',
-          '--disable-preconnect',
-          '--disable-hang-monitor',
-          '--disable-popup-blocking',
-          '--disable-prompt-on-repost',
-          '--disable-media-session-api',
-          '--disable-breakpad',
-          '--disable-client-side-phishing-detection',
-          '--no-first-run',
-          '--no-default-browser-check',
-          '--disable-default-apps',
-          '--disable-sync-types',
-        ],
+        args: puppeteerArgs,
+        timeout: 60000,
       }
     });
 
     this.client.on("qr", qrGenerationCallback);
     this.client.on("ready", () => {
       this.isReady = true;
+      this.reconnectAttempts = 0; // Reset contador
       console.log(`Sesión ${sessionId} lista`);
       readyInstaceCallback(sessionId);
     });
     this.client.on("message_create", this.onMessageCreate.bind(this));
     this.client.on("error", this.onError.bind(this));
     this.client.on("auth_failure", this.onAuthFailure.bind(this));
-    this.client.on("disconnected", this.onDisconnected.bind(this));
+    this.client.on("disconnected", () => this.onDisconnected(sessionId));
 
     this.client.initialize().catch(err => {
       console.error("Error inicializando cliente para sesión", sessionId, err);
     });
+  }
+
+  private getPuppeteerArgs(): string[] {
+    const baseArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-gpu',
+      '--disable-web-resources',
+      '--disable-extensions',
+      '--disable-blink-features=AutomationControlled',
+      '--disable-sync',
+      '--disable-popup-blocking',
+      '--no-first-run',
+      '--no-default-browser-check',
+    ];
+
+    // Verificar si estamos en un VPS con /dev/shm limitado
+    const isLimitedSHM = this.hasLimitedSHM();
+    
+    if (isLimitedSHM) {
+      console.log("Detectado /dev/shm limitado, deshabilitando...");
+      baseArgs.push('--disable-dev-shm-usage');
+    } else {
+      // Si /dev/shm está disponible, podemos usar más optimizaciones
+      baseArgs.push('--disable-dev-shm-usage'); // Aún así deshabilitarlo para VPS es más seguro
+    }
+
+    return baseArgs;
+  }
+
+  private hasLimitedSHM(): boolean {
+    try {
+      // En Linux, verificar tamaño de /dev/shm
+      if (process.platform === 'linux') {
+        const stats = fs.statfsSync('/dev/shm');
+        const availableMB = (stats.bavail * stats.bsize) / (1024 * 1024);
+        console.log(`/dev/shm disponible: ${availableMB.toFixed(2)}MB`);
+        return availableMB < 100; // Si tiene menos de 100MB, es limitado
+      }
+    } catch (err) {
+      console.log("No se pudo verificar /dev/shm, asumiendo limitado");
+      return true;
+    }
+    return false;
   }
 
   public getIsReady(): boolean {
@@ -97,9 +126,22 @@ export class WhatsappWebSession {
     this.isReady = false;
   }
 
-  private onDisconnected() {
-    console.log("Cliente desconectado");
+  private async onDisconnected(sessionId: string) {
+    console.log("Cliente desconectado:", sessionId);
     this.isReady = false;
+    
+    // Intentar reconectar
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      console.log(`Reintentando conexión (${this.reconnectAttempts}/${this.maxReconnectAttempts}) en ${this.reconnectDelay}ms`);
+      setTimeout(() => {
+        this.client.initialize().catch(err => {
+          console.error("Error reconectando:", err);
+        });
+      }, this.reconnectDelay);
+    } else {
+      console.error(`Máximo de reintentos alcanzado para sesión ${sessionId}`);
+    }
   }
 
   public async sendMessage(phoneNumber: string, message: string): Promise<void> {
