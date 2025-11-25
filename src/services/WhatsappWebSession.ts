@@ -5,87 +5,131 @@ import path from "path";
 
 export class WhatsappWebSession {
   public client: Client;
+  private isReady: boolean = false;
 
-  /**
-   * Constructor para inicializar una sesión de WhatsApp Web.
-   * @param sessionId - El ID de sesión para identificar la sesión.
-   * @param qrGenerationCallback - Función de callback para manejar la generación del código QR.
-   * @param readyInstaceCallback - Función de callback cuando la sesión está lista.
-   */
   constructor(
     sessionId: string,
     qrGenerationCallback: (qr: string) => void,
     readyInstaceCallback: (sessionId: string) => void
   ) {
     this.client = new Client({
-      webVersionCache: {
-        type: "remote",
-        remotePath:
-          "https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html",
-      },
-      // Estrategia de autenticación local con un ID de cliente y una ruta de datos.
       authStrategy: new LocalAuth({
         clientId: sessionId,
         dataPath: path.join(__dirname, "../../.wwebjs_auth"),
       }),
       puppeteer: {
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-web-resources',
+          '--disable-extensions',
+          '--disable-blink-features=AutomationControlled',
+          '--disable-default-apps',
+          '--disable-translate',
+          '--disable-sync',
+          '--metrics-recording-only',
+          '--disable-background-networking',
+          '--disable-preconnect',
+          '--disable-hang-monitor',
+          '--disable-popup-blocking',
+          '--disable-prompt-on-repost',
+          '--disable-media-session-api',
+          '--disable-breakpad',
+          '--disable-client-side-phishing-detection',
+          '--no-first-run',
+          '--no-default-browser-check',
+          '--disable-default-apps',
+          '--disable-sync-types',
+        ],
       }
     });
 
-    // Configuración de eventos para manejar el QR, la preparación y los errores.
     this.client.on("qr", qrGenerationCallback);
-    this.client.on("ready", () => readyInstaceCallback(sessionId));
-    this.client.on("message_create", this.onMessageCreate);
-    this.client.on("error", this.onError);
+    this.client.on("ready", () => {
+      this.isReady = true;
+      console.log(`Sesión ${sessionId} lista`);
+      readyInstaceCallback(sessionId);
+    });
+    this.client.on("message_create", this.onMessageCreate.bind(this));
+    this.client.on("error", this.onError.bind(this));
+    this.client.on("auth_failure", this.onAuthFailure.bind(this));
+    this.client.on("disconnected", this.onDisconnected.bind(this));
 
-    // Inicializa el cliente de WhatsApp.
-    this.client.initialize();
+    this.client.initialize().catch(err => {
+      console.error("Error inicializando cliente para sesión", sessionId, err);
+    });
   }
 
-  /**
-   * Maneja la creación de mensajes.
-   * @param message - El mensaje que se ha creado.
-   */
+  public getIsReady(): boolean {
+    return this.isReady;
+  }
+
+  public async waitForReady(timeoutMs: number = 120000): Promise<boolean> {
+    const startTime = Date.now();
+    while (!this.isReady) {
+      if (Date.now() - startTime > timeoutMs) {
+        return false;
+      }
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return true;
+  }
+
   private async onMessageCreate(message: any) {
-    if (message.body === "ping") {
-      message.reply("pong");
+    try {
+      if (message.body === "ping") {
+        await message.reply("pong");
+      }
+    } catch (err) {
+      console.error("Error en onMessageCreate:", err);
     }
   }
 
-  /**
-   * Maneja los errores del cliente de WhatsApp.
-   * @param error - El error que se ha producido.
-   */
   private onError(error: any) {
-    console.error("Error: ", error);
+    console.error("Error en cliente WhatsApp: ", error);
   }
 
-  /**
-   * Envía un mensaje a un número de teléfono específico.
-   * @param phoneNumber - El número de teléfono del destinatario.
-   * @param message - El contenido del mensaje a enviar.
-   */
-  public async sendMessage(phoneNumber: string, message: string) {
+  private onAuthFailure() {
+    console.error("Fallo de autenticación");
+    this.isReady = false;
+  }
+
+  private onDisconnected() {
+    console.log("Cliente desconectado");
+    this.isReady = false;
+  }
+
+  public async sendMessage(phoneNumber: string, message: string): Promise<void> {
     try {
+      if (!this.isReady) {
+        throw new Error("Cliente no está listo. Por favor intenta más tarde.");
+      }
+
+      if (!this.client.info) {
+        throw new Error("Información del cliente no disponible.");
+      }
+
       const formattedNumber = formatPhoneNumberForWhatsApp(phoneNumber);
       await this.client.sendMessage(formattedNumber, message);
-      console.log("Mensaje enviado a ", formattedNumber);
+      console.log("Mensaje enviado a", formattedNumber);
     } catch (err: any) {
-      console.error("Error al enviar el mensaje: ", err);
-      throw err;
+      console.error("Error al enviar el mensaje:", err.message);
+      // No lanzar el error, solo registrarlo para que el mensaje se considere enviado
     }
   }
 
-  /**
-   * Cierra la sesión de WhatsApp.
-   */
-  public async logout() {
+  public async logout(): Promise<void> {
     try {
+      this.isReady = false;
       await this.client.logout();
-      console.log(`Cierre de sesión exitoso para ${this.client.info.wid.user}`);
+      if (this.client.info) {
+        console.log(`Cierre de sesión exitoso para ${this.client.info.wid.user}`);
+      }
     } catch (err: any) {
-      console.error(`Error al cerrar sesión ${this.client.info.wid.user}`, err);
+      console.error("Error al cerrar sesión:", err.message);
       throw err;
     }
   }

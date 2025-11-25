@@ -49,20 +49,29 @@ class MessageService implements IMessageService {
    */
   async createMessage(message: IMessage): Promise<IMessage> {
     try {
-      console.log(message);
+      console.log("Datos del mensaje:", message);
       console.log(
         `Enviando mensaje al número ${message.phoneNumberMaestro}: ${message.message}`
       );
-      await this.whatsappClient.sendMessage(
+
+      const clients = this.whatsappClient.getAllClients();
+      if (!clients[message.sessionId]) {
+        throw new Error(`Sesión ${message.sessionId} no existe.`);
+      }
+
+      // Usar el nuevo método con espera
+      await this.whatsappClient.sendMessageWithWait(
         message.sessionId,
         message.phoneNumberMaestro,
-        message.message
+        message.message,
+        30000 // Esperar máximo 30 segundos
       );
+      
       console.log(`Mensaje enviado a ${message.phoneNumberMaestro}`);
       return await Message.create(message);
-    } catch (err) {
-      console.error("Error en createMessage:", err);
-      throw new Error("Error al enviar el mensaje: " + err);
+    } catch (err: any) {
+      console.error("Error en createMessage:", err.message);
+      throw new Error("Error al enviar el mensaje: " + err.message);
     }
   }
 }

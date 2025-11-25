@@ -107,6 +107,35 @@ class WhatsAppClient {
         throw new Error(`Sesión ${sessionId} no encontrada.`);
       }
 
+      if (!session.getIsReady()) {
+        throw new Error(`Sesión ${sessionId} no está lista. Estado: no conectado.`);
+      }
+
+      await session.sendMessage(phoneNumber, message);
+    } catch (err) {
+      console.error("Error al enviar el mensaje:", err);
+      throw err;
+    }
+  }
+
+  public async sendMessageWithWait(
+    sessionId: string,
+    phoneNumber: string,
+    message: string,
+    maxWaitTime: number = 30000
+  ): Promise<void> {
+    try {
+      const session = this.sessionIdVsClientInstance[sessionId];
+      if (!session) {
+        throw new Error(`Sesión ${sessionId} no encontrada.`);
+      }
+
+      // Esperar máximo 30 segundos a que esté lista
+      const isReady = await session.waitForReady(maxWaitTime);
+      if (!isReady) {
+        throw new Error(`Sesión ${sessionId} no se conectó en el tiempo permitido.`);
+      }
+
       await session.sendMessage(phoneNumber, message);
     } catch (err) {
       console.error("Error al enviar el mensaje:", err);
